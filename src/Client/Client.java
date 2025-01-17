@@ -189,6 +189,11 @@ public class Client {
              PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
              BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
 
+            ObjectOutputStream objectOutputStream = new ObjectOutputStream(socket.getOutputStream());
+            objectOutputStream.writeObject(publicKey);
+            ObjectInputStream objectInputStream = new ObjectInputStream(socket.getInputStream());
+            sendPublicKey = (PublicKey) objectInputStream.readObject();
+
             KeyGenerator keyGenerator = KeyGenerator.getInstance("AES");
             keyGenerator.init(128);
             SecretKey secretKey = keyGenerator.generateKey();
@@ -213,7 +218,7 @@ public class Client {
         } catch (IOException e) {
             System.out.println("Failed to connect to the server: " + e.getMessage());
         } catch (NoSuchPaddingException | IllegalBlockSizeException | NoSuchAlgorithmException | BadPaddingException |
-                 InvalidKeyException | SignatureException e) {
+                 InvalidKeyException | SignatureException | ClassNotFoundException e) {
             throw new RuntimeException(e);
         }
     }
