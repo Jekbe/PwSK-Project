@@ -1,7 +1,11 @@
 package Client;
 
+import javax.crypto.*;
+import javax.crypto.spec.SecretKeySpec;
 import java.io.*;
 import java.net.Socket;
+import java.nio.charset.StandardCharsets;
+import java.security.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -9,11 +13,19 @@ public class Client {
     private static final String HOST = "localhost";
     private static final int PORT = 8000;
     private static int messageId = 1;
-
     private static boolean isLoggedIn = false;
     private static String username = "";
+    private static PublicKey publicKey;
+    private static PrivateKey privateKey;
+    private static PublicKey sendPublicKey;
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws NoSuchAlgorithmException {
+        KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
+        keyPairGenerator.initialize(2048);
+        KeyPair keyPair = keyPairGenerator.generateKeyPair();
+        privateKey = keyPair.getPrivate();
+        publicKey = keyPair.getPublic();
+
         Scanner scanner = new Scanner(System.in);
         String currentMode = "[Main Menu] ";
 
@@ -177,21 +189,104 @@ public class Client {
              PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
              BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
 
-            out.println(request);
+            KeyGenerator keyGenerator = KeyGenerator.getInstance("AES");
+            keyGenerator.init(128);
+            SecretKey secretKey = keyGenerator.generateKey();
 
+            String signedReqest = sign(request);
+            String encryptedRequest = encrypt(request, secretKey);
+            String key = encryptKey(secretKey);
+            out.println(signedReqest);
+            out.println(encryptedRequest);
+            out.println(key);
+
+            String encodedSign = in.readLine();
             String encodedResponse = in.readLine();
+            String encodedKey = in.readLine();
+            secretKey = decryptKey(encodedKey);
+            String text = decrypt(encodedResponse, secretKey);
+            if (verify(encodedSign, text)){
+                System.out.println(text);
+            } else System.out.println("Nie udało się zweryfikować nadawcy");
 
-            response(encodedResponse);
+            response(text);
         } catch (IOException e) {
             System.out.println("Failed to connect to the server: " + e.getMessage());
+        } catch (NoSuchPaddingException | IllegalBlockSizeException | NoSuchAlgorithmException | BadPaddingException |
+                 InvalidKeyException | SignatureException e) {
+            throw new RuntimeException(e);
         }
+    }
+
+    private static String sign(String text){
+        try {
+            Signature signature = Signature.getInstance("SHA256withRSA");
+            signature.initSign(privateKey);
+            signature.update(text.getBytes(StandardCharsets.UTF_8));
+
+            byte[] bytes = signature.sign();
+
+            return Base64.getEncoder().encodeToString(bytes);
+        } catch (NoSuchAlgorithmException | SignatureException | InvalidKeyException e){
+            System.out.println("Sign error " + e.getMessage());
+            return null;
+        }
+    }
+
+    private static String encrypt(String text, SecretKey secretKey){
+        try {
+            Cipher cipher = Cipher.getInstance("AES");
+            cipher.init(Cipher.ENCRYPT_MODE, secretKey);
+
+            byte[] bytes = cipher.doFinal(text.getBytes());
+
+            return Base64.getEncoder().encodeToString(bytes);
+        } catch (NoSuchPaddingException | NoSuchAlgorithmException | InvalidKeyException | IllegalBlockSizeException | BadPaddingException e){
+            System.out.println("Encrypt error " + e.getMessage());
+            return  null;
+        }
+    }
+
+    private static String encryptKey(SecretKey secretKey) throws NoSuchPaddingException, NoSuchAlgorithmException, InvalidKeyException, IllegalBlockSizeException, BadPaddingException {
+        Cipher cipher = Cipher.getInstance("RSA");
+        cipher.init(Cipher.ENCRYPT_MODE, sendPublicKey);
+
+        byte[] bytes = cipher.doFinal(secretKey.getEncoded());
+
+        return Base64.getEncoder().encodeToString(bytes);
+    }
+
+    private static SecretKey decryptKey(String encryptedKey) throws IllegalBlockSizeException, BadPaddingException, InvalidKeyException, NoSuchPaddingException, NoSuchAlgorithmException {
+        Cipher cipher = Cipher.getInstance("RSA");
+        cipher.init(Cipher.DECRYPT_MODE, privateKey);
+
+        byte[] bytes = cipher.doFinal(Base64.getDecoder().decode(encryptedKey));
+
+        return new SecretKeySpec(bytes, 0, bytes.length, "AES");
+    }
+
+    private static boolean verify(String sign, String text) throws NoSuchAlgorithmException, InvalidKeyException, SignatureException {
+        Signature signature = Signature.getInstance("SHA256withRSA");
+        signature.initVerify(sendPublicKey);
+        signature.update(text.getBytes(StandardCharsets.UTF_8));
+
+        byte[] bytes = Base64.getDecoder().decode(sign);
+
+        return signature.verify(bytes);
+    }
+
+    private static String decrypt(String encryptedText, SecretKey secretKey) throws NoSuchPaddingException, NoSuchAlgorithmException, InvalidKeyException, IllegalBlockSizeException, BadPaddingException {
+        Cipher cipher = Cipher.getInstance("AES");
+        cipher.init(Cipher.DECRYPT_MODE, secretKey);
+
+        byte[] bytes = cipher.doFinal(Base64.getDecoder().decode(encryptedText));
+
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     private static String encode(String message) {
         return Base64.getEncoder().encodeToString(message.getBytes());
     }
-
-
 
     public static void response(String encodedResponse) {
         String decodedResponse = decodeBase64(encodedResponse);
